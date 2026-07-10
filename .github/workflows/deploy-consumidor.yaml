@@ -1,0 +1,122 @@
+# =============================================================================
+# PIPELINE CI/CD - despacho-consumidor-service
+# CDY2204 - Desarrollo Cloud Native | Semana 8
+# =============================================================================
+# Disparador: cualquier push a la rama principal.
+# Flujo: Compilar → Construir imagen Docker → Publicar en Docker Hub → Desplegar en EC2 de microservicios
+#
+# IMPORTANTE: este servicio SÍ genera PDFs y necesita EFS temporal (igual
+# que el antiguo despacho-service). NO lleva variables de Azure AD B2C
+# porque no expone endpoints REST securitizados (no recibe tráfico del
+# API Gateway, solo consume de RabbitMQ).
+# =============================================================================
+
+name: CI/CD - Build, Push & Deploy (Consumidor)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build & Test (Maven)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Compilar y empaquetar con Maven
+        run: mvn clean package -DskipTests -B
+
+      - name: Guardar el JAR compilado para el siguiente job
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+          retention-days: 1
+
+  docker:
+    name: Docker Build & Push (Docker Hub)
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout del código fuente
+        uses: actions/checkout@v4
+
+      - name: Autenticarse en Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir y publicar imagen Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/despacho-consumidor-service:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/despacho-consumidor-service:${{ github.sha }}
+
+  deploy:
+    name: Deploy en AWS EC2 (microservicios)
+    runs-on: ubuntu-latest
+    needs: docker
+
+    steps:
+      - name: Conectar a EC2 vía SSH y redesplegar contenedor
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo ">>> [1/5] Descargando imagen más reciente desde Docker Hub..."
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/despacho-consumidor-service:latest
+
+            echo ">>> [2/5] Deteniendo y eliminando el contenedor anterior (si existe)..."
+            docker stop despacho-consumidor-service 2>/dev/null || true
+            docker rm   despacho-consumidor-service 2>/dev/null || true
+
+            echo ">>> [3/5] Asegurando que el directorio EFS está montado en /home/ec2-user/efs/guias..."
+            mkdir -p /home/ec2-user/efs/guias
+
+            echo ">>> [4/5] Iniciando nuevo contenedor con variables de entorno de producción..."
+            docker run -d \
+              --name despacho-consumidor-service \
+              --restart unless-stopped \
+              -p 8081:8081 \
+              -e PORT=8081 \
+              -e EFS_TEMP_PATH=/tmp/guias \
+              -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+              -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+              -e AWS_SESSION_TOKEN=${{ secrets.AWS_SESSION_TOKEN }} \
+              -e AWS_S3_BUCKET_NAME=${{ secrets.AWS_S3_BUCKET_NAME }} \
+              -e AWS_REGION=${{ secrets.AWS_REGION }} \
+              -e H2_SERVER_HOST=${{ secrets.INFRA_EC2_PRIVATE_IP }} \
+              -e H2_SERVER_PORT=1521 \
+              -e SPRING_RABBITMQ_HOST=${{ secrets.INFRA_EC2_PRIVATE_IP }} \
+              -e SPRING_RABBITMQ_PORT=5672 \
+              -e SPRING_RABBITMQ_USERNAME=${{ secrets.RABBITMQ_USERNAME }} \
+              -e SPRING_RABBITMQ_PASSWORD=${{ secrets.RABBITMQ_PASSWORD }} \
+              -v /home/ec2-user/efs/guias:/tmp/guias \
+              ${{ secrets.DOCKERHUB_USERNAME }}/despacho-consumidor-service:latest
+
+            echo ">>> [5/5] Limpiando imágenes Docker obsoletas para liberar espacio en disco..."
+            docker image prune -f
+
+            echo ">>> Despliegue completado. Contenedor activo:"
+            docker ps --filter "name=despacho-consumidor-service"
