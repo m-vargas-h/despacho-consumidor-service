@@ -13,6 +13,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import com.duoc.despacho_consumidor_service.dto.message.GuiaMensajeDTO;
+
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -54,8 +57,19 @@ public class RabbitMQConfig {
     @Bean
     public MessageConverter jsonMessageConverter() {
         Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter();
+
         DefaultJackson2JavaTypeMapper typeMapper = new DefaultJackson2JavaTypeMapper();
         typeMapper.setTrustedPackages("*");
+
+        // Mapea el nombre de clase que manda el productor hacia la clase
+        // equivalente local del consumidor (mismos campos, paquete distinto).
+        Map<String, Class<?>> idClassMapping = new HashMap<>();
+        idClassMapping.put(
+            "com.duoc.despacho_productor_service.dto.message.GuiaMensajeDTO",
+            GuiaMensajeDTO.class
+        );
+        typeMapper.setIdClassMapping(idClassMapping);
+
         converter.setJavaTypeMapper(typeMapper);
         return converter;
     }
