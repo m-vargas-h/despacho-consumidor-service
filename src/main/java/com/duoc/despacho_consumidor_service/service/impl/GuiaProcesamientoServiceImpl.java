@@ -70,7 +70,7 @@ public class GuiaProcesamientoServiceImpl implements GuiaProcesamientoService {
         guia.setDireccionOrigen(mensaje.getDireccionOrigen());
         guia.setDireccionDestino(mensaje.getDireccionDestino());
         guia.setDescripcionCarga(mensaje.getDescripcionCarga());
-        guia.setEstado(EstadoGuia.PENDIENTE);
+        guia.setEstado(EstadoGuia.ENVIADO);
 
         Files.createDirectories(storagePath);
         Path archivoPdf = storagePath.resolve("guia-" + sanitizeFilePart(guia.getNumeroGuia()) + ".pdf");
