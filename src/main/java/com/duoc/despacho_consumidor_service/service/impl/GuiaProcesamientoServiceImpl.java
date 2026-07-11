@@ -13,6 +13,8 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
+import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -106,26 +108,159 @@ public class GuiaProcesamientoServiceImpl implements GuiaProcesamientoService {
 
     private void generatePdf(GuiaDespacho guia, Path filePath) throws IOException {
         Files.createDirectories(filePath.getParent());
+
         try (PDDocument document = new PDDocument()) {
             PDPage page = new PDPage(PDRectangle.A4);
             document.addPage(page);
 
-            PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
-            try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
-                contentStream.beginText();
-                contentStream.setFont(font, 12);
-                contentStream.setLeading(16f);
-                contentStream.newLineAtOffset(50, 780);
-                writePdfLine(contentStream, "Guia de despacho");
-                writePdfLine(contentStream, "Numero guia: " + guia.getNumeroGuia());
-                writePdfLine(contentStream, "Transportista: " + guia.getTransportista());
-                writePdfLine(contentStream, "Fecha: " + guia.getFecha());
-                writePdfLine(contentStream, "Origen: " + guia.getDireccionOrigen());
-                writePdfLine(contentStream, "Destino: " + guia.getDireccionDestino());
-                writePdfLine(contentStream, "Descripcion: " + nullSafe(guia.getDescripcionCarga()));
-                writePdfLine(contentStream, "Estado: " + guia.getEstado());
-                contentStream.endText();
+            PDType1Font fontBold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+            PDType1Font fontRegular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
+            PDType1Font fontItalic = new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE);
+
+            float pageWidth = page.getMediaBox().getWidth();
+            float margin = 50;
+            float contentWidth = pageWidth - (2 * margin);
+            float cursorY = 780;
+
+            try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+
+                // ===== ENCABEZADO =====
+                String titulo = "GUIA DE DESPACHO";
+                float tituloWidth = fontBold.getStringWidth(titulo) / 1000 * 20;
+                cs.beginText();
+                cs.setFont(fontBold, 20);
+                cs.newLineAtOffset((pageWidth - tituloWidth) / 2, cursorY);
+                cs.showText(titulo);
+                cs.endText();
+                cursorY -= 18;
+
+                String subtitulo = "Sistema de Gestion de Pedidos y Despacho";
+                float subtituloWidth = fontItalic.getStringWidth(subtitulo) / 1000 * 10;
+                cs.beginText();
+                cs.setFont(fontItalic, 10);
+                cs.newLineAtOffset((pageWidth - subtituloWidth) / 2, cursorY);
+                cs.showText(subtitulo);
+                cs.endText();
+                cursorY -= 20;
+
+                // Linea gruesa bajo el encabezado
+                cs.setLineWidth(1.5f);
+                cs.setStrokingColor(new PDColor(new float[]{0.1f, 0.1f, 0.1f}, PDDeviceRGB.INSTANCE));
+                cs.moveTo(margin, cursorY);
+                cs.lineTo(pageWidth - margin, cursorY);
+                cs.stroke();
+                cursorY -= 30;
+
+                // ===== CAJA DESTACADA: NUMERO DE GUIA + ESTADO =====
+                float boxHeight = 40;
+                cs.setNonStrokingColor(new PDColor(new float[]{0.93f, 0.93f, 0.93f}, PDDeviceRGB.INSTANCE));
+                cs.addRect(margin, cursorY - boxHeight, contentWidth, boxHeight);
+                cs.fill();
+                cs.setStrokingColor(new PDColor(new float[]{0.1f, 0.1f, 0.1f}, PDDeviceRGB.INSTANCE));
+                cs.setLineWidth(0.8f);
+                cs.addRect(margin, cursorY - boxHeight, contentWidth, boxHeight);
+                cs.stroke();
+
+                cs.beginText();
+                cs.setFont(fontBold, 13);
+                cs.setNonStrokingColor(new PDColor(new float[]{0f, 0f, 0f}, PDDeviceRGB.INSTANCE));
+                cs.newLineAtOffset(margin + 15, cursorY - 25);
+                cs.showText("N. Guia: " + sanitizePdfText(guia.getNumeroGuia()));
+                cs.endText();
+
+                String estadoTexto = "Estado: " + sanitizePdfText(guia.getEstado().toString());
+                float estadoWidth = fontBold.getStringWidth(estadoTexto) / 1000 * 13;
+                cs.beginText();
+                cs.setFont(fontBold, 13);
+                cs.newLineAtOffset(pageWidth - margin - 15 - estadoWidth, cursorY - 25);
+                cs.showText(estadoTexto);
+                cs.endText();
+
+                cursorY -= (boxHeight + 30);
+
+                // ===== TABLA DE DATOS =====
+                String[][] filas = {
+                    {"Fecha de emision", String.valueOf(guia.getFecha())},
+                    {"Transportista", nullSafe(guia.getTransportista())},
+                    {"Direccion de origen", nullSafe(guia.getDireccionOrigen())},
+                    {"Direccion de destino", nullSafe(guia.getDireccionDestino())},
+                    {"Descripcion de carga", nullSafe(guia.getDescripcionCarga())}
+                };
+
+                float labelColWidth = 160;
+                float rowHeight = 28;
+                float tableTop = cursorY;
+                float tableBottom = cursorY - (rowHeight * filas.length);
+
+                // Borde exterior de la tabla
+                cs.setLineWidth(0.8f);
+                cs.addRect(margin, tableBottom, contentWidth, tableTop - tableBottom);
+                cs.stroke();
+
+                // Linea vertical separando columna de etiqueta y valor
+                cs.moveTo(margin + labelColWidth, tableTop);
+                cs.lineTo(margin + labelColWidth, tableBottom);
+                cs.stroke();
+
+                float filaY = tableTop;
+                for (int i = 0; i < filas.length; i++) {
+                    if (i > 0) {
+                        cs.moveTo(margin, filaY);
+                        cs.lineTo(margin + contentWidth, filaY);
+                        cs.stroke();
+                    }
+
+                    float textY = filaY - (rowHeight / 2f) - 4;
+
+                    cs.beginText();
+                    cs.setFont(fontBold, 10.5f);
+                    cs.newLineAtOffset(margin + 10, textY);
+                    cs.showText(sanitizePdfText(filas[i][0]));
+                    cs.endText();
+
+                    cs.beginText();
+                    cs.setFont(fontRegular, 10.5f);
+                    cs.newLineAtOffset(margin + labelColWidth + 10, textY);
+                    cs.showText(sanitizePdfText(filas[i][1]));
+                    cs.endText();
+
+                    filaY -= rowHeight;
+                }
+
+                cursorY = tableBottom - 40;
+
+                // ===== FIRMA / RECEPCION =====
+                cs.setLineWidth(0.8f);
+                cs.moveTo(margin, cursorY);
+                cs.lineTo(margin + 180, cursorY);
+                cs.stroke();
+                cs.beginText();
+                cs.setFont(fontRegular, 9);
+                cs.newLineAtOffset(margin, cursorY - 12);
+                cs.showText("Firma transportista");
+                cs.endText();
+
+                cs.moveTo(pageWidth - margin - 180, cursorY);
+                cs.lineTo(pageWidth - margin, cursorY);
+                cs.stroke();
+                cs.beginText();
+                cs.setFont(fontRegular, 9);
+                cs.newLineAtOffset(pageWidth - margin - 180, cursorY - 12);
+                cs.showText("Firma receptor");
+                cs.endText();
+
+                // ===== PIE DE PAGINA =====
+                String pie = "Documento generado automaticamente el "
+                        + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
+                float pieWidth = fontItalic.getStringWidth(pie) / 1000 * 8;
+                cs.beginText();
+                cs.setFont(fontItalic, 8);
+                cs.setNonStrokingColor(new PDColor(new float[]{0.4f, 0.4f, 0.4f}, PDDeviceRGB.INSTANCE));
+                cs.newLineAtOffset((pageWidth - pieWidth) / 2, 40);
+                cs.showText(pie);
+                cs.endText();
             }
+
             document.save(filePath.toFile());
         }
     }
