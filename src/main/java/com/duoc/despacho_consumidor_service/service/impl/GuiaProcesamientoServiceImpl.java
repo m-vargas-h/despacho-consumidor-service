@@ -86,7 +86,7 @@ public class GuiaProcesamientoServiceImpl implements GuiaProcesamientoService {
                         .build(),
                 RequestBody.fromFile(archivoPdf));
         guia.setRutaS3(s3Key);
-        guia.setEstado(EstadoGuia.ENVIADO);
+        //guia.setEstado(EstadoGuia.ENVIADO);
 
         guiaDespachoRepository.save(guia);
 
