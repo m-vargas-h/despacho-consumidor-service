@@ -116,3 +116,4 @@ src/main/java/com/duoc/despacho_consumidor_service/
 ├── repository/      # Repositorios JPA
 └── service/         # Generación de PDF, subida a S3, persistencia
 ```
+
